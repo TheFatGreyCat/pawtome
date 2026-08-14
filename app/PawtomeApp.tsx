@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { citationFor, localize as localizeCatalog, type AnimalEntry, type CatalogGroup, type Locale } from "@/lib/catalog";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { persistFavorite, uploadPetPhoto } from "@/lib/persistence";
 
-type Locale = "en-US" | "en-GB" | "vi";
 type Tone = "safe" | "caution" | "avoid" | "danger" | "neutral";
 
 const breedImages: Record<string, string> = {
@@ -49,7 +51,7 @@ const behaviorItems = ["Tail wagging", "Licking paws", "Zoomies", "Growling", "B
 
 const routeMeta: Record<string, [string, string, string, string]> = {
   "/discover": ["Discover Pawtome", "A calmer way to find the right guidance.", "Khám phá Pawtome", "Một cách rõ ràng hơn để tìm hướng dẫn phù hợp."],
-  "/breeds": ["Breed encyclopedia", "Discover personalities, needs and everyday realities before you adopt.", "Bách khoa giống thú cưng", "Khám phá tính cách, nhu cầu và thực tế chăm sóc trước khi nhận nuôi."],
+  "/breeds": ["Multi-species encyclopedia", "Explore reviewed guidance for breeds, species and recognized varieties.", "Bách khoa thú cưng đa loài", "Khám phá hướng dẫn đã rà soát cho giống, loài và biến thể được công nhận."],
   "/compare": ["Compare breeds", "See meaningful differences side by side—not a winner and a loser.", "So sánh giống", "Xem những khác biệt quan trọng cạnh nhau—không xếp hạng hơn thua."],
   "/pet-match": ["Which pet fits your life?", "A thoughtful starting point, never a guarantee of individual temperament.", "Thú cưng nào hợp với bạn?", "Điểm khởi đầu hữu ích, không phải bảo đảm về tính khí từng cá thể."],
   "/food": ["Can my pet eat this?", "Clear food guidance for dogs and cats.", "Thú cưng của tôi có ăn được không?", "Hướng dẫn thực phẩm rõ ràng cho chó và mèo."],
@@ -64,6 +66,7 @@ const routeMeta: Record<string, [string, string, string, string]> = {
   "/ask": ["Ask Pawtome", "Clear explanations grounded in the reviewed Pawtome Care Library.", "Hỏi Pawtome", "Giải thích rõ ràng dựa trên Thư viện Chăm sóc Pawtome đã được rà soát."],
   "/my-pets": ["My pets", "A personal home for routines, progress and memories.", "Thú cưng của tôi", "Nơi riêng để lưu thói quen, tiến bộ và kỷ niệm."],
   "/saved": ["Saved for later", "Your breeds, foods, lessons and guides in one quiet place.", "Đã lưu", "Giống, thực phẩm, bài học và hướng dẫn ở một nơi."],
+  "/account": ["Your Pawtome account", "Secure access to private pet profiles and progress.", "Tài khoản Pawtome", "Truy cập an toàn vào hồ sơ và tiến độ riêng tư."],
 };
 
 function localized(locale: Locale, english: string, vietnamese: string) {
@@ -81,7 +84,11 @@ function localized(locale: Locale, english: string, vietnamese: string) {
 }
 
 function Stars({ value }: { value: number }) {
+  void value;
+  return <span className="stars" aria-label="Needs evidence review">—</span>;
+  /* ponytail: keep the legacy rating source inert until each value has evidence.
   return <span className="stars" aria-label={`${value} out of 5`}>{"★".repeat(value)}{"☆".repeat(5 - value)}</span>;
+  */
 }
 
 function Status({ tone, children }: { tone: Tone; children?: ReactNode }) {
@@ -106,6 +113,46 @@ function BreedCard({ breed, locale, saved, toggle }: { breed: typeof breeds[numb
       <div className="ratings"><span>{localized(locale, "Energy", "Năng lượng")} <Stars value={breed.energy} /></span><span>{localized(locale, "Beginner", "Người mới")} <Stars value={breed.ease} /></span></div>
     </div>
   </article>;
+}
+
+const groupLabels: Record<CatalogGroup, [string, string]> = {
+  dog: ["Dog breed", "Giống chó"], cat: ["Cat breed", "Giống mèo"], bird: ["Bird species / variety", "Loài / biến thể chim"],
+  "small-mammal": ["Rabbit / small mammal", "Thỏ / thú nhỏ"], reptile: ["Reptile species", "Loài bò sát"], "freshwater-fish": ["Freshwater fish", "Cá nước ngọt"],
+};
+
+function CatalogCard({ entry, locale, saved, toggle }: { entry: AnimalEntry; locale: Locale; saved: boolean; toggle: () => void }) {
+  const l = (en: string, vi: string) => localized(locale, en, vi);
+  return <article className="breed-card catalog-card">
+    <a className="image-link catalog-image" href={`/breeds/${entry.slug}`}>
+      <img src={entry.imageUrl} alt={localizeCatalog(entry.imageAlt, locale)} onError={e => { e.currentTarget.src = "/brand/pawtome-logo.png"; }} />
+    </a>
+    <button className={`save ${saved ? "active" : ""}`} aria-label={saved ? l("Remove from saved", "Bỏ lưu") : l("Save entry", "Lưu mục này")} onClick={toggle}>{saved ? "♥" : "♡"}</button>
+    <div className="card-body">
+      <span className="kicker">{l(...groupLabels[entry.group])}{entry.origin ? ` · ${entry.origin}` : ""}</span>
+      <h3>{localizeCatalog(entry.commonName, locale)}</h3>
+      <p><i>{entry.scientificName}</i></p>
+      <div className="catalog-tags"><Status tone="neutral">{l(`${entry.activity} activity`, `Vận động: ${entry.activity}`)}</Status><Status tone={entry.reviewStatus === "needs-entry-review" ? "caution" : "safe"}>{entry.reviewStatus === "needs-entry-review" ? l("Needs entry review", "Cần rà soát riêng") : l("Reviewed", "Đã rà soát")}</Status></div>
+    </div>
+  </article>;
+}
+
+function EvidenceSection({ entry, locale }: { entry: AnimalEntry; locale: Locale }) {
+  const l = (en: string, vi: string) => localized(locale, en, vi);
+  const sources = entry.citationIds.map(citationFor).filter(Boolean);
+  return <Section eyebrow={l("Traceable evidence", "Bằng chứng có thể truy vết")} title={l("Sources and review status", "Nguồn và trạng thái rà soát")} intro={l("Each source supports a named general claim. Entry-specific health, lifespan and precise ratings remain unset until separately reviewed.", "Mỗi nguồn hỗ trợ một khẳng định chung được nêu rõ. Sức khỏe riêng, tuổi thọ và điểm số chính xác vẫn để trống đến khi được rà soát riêng.")}>
+    <div className="evidence-list container">{sources.map(source => source && <article key={source.id}><div><Status tone="neutral">{source.evidenceType.replaceAll("-", " ")}</Status><Status tone="safe">{source.evidenceStrength.replaceAll("-", " ")}</Status></div><h3><a href={source.url} target="_blank" rel="noreferrer">{source.title} ↗</a></h3><p>{source.authorsOrOrganization} · {source.publicationYear ?? l("Year not stated", "Không nêu năm")} · {source.journalOrPublisher}</p><p><b>{l("Supported claim:", "Khẳng định được hỗ trợ:")}</b> {source.supportedClaim}</p><p className="fineprint"><b>{l("Limit:", "Giới hạn:")}</b> {source.limitations}</p></article>)}</div>
+    <p className="container fineprint">{l(`Last reviewed ${entry.reviewedAt}. Pawtome provides general education and does not replace veterinary assessment.`, `Rà soát lần cuối ${entry.reviewedAt}. Pawtome cung cấp kiến thức chung và không thay thế đánh giá thú y.`)}</p>
+  </Section>;
+}
+
+function AnimalDetail({ entry, locale }: { entry: AnimalEntry; locale: Locale }) {
+  const l = (en: string, vi: string) => localized(locale, en, vi);
+  const facts = [[l("Origin", "Nguồn gốc"), entry.origin ?? l("Needs review", "Cần rà soát")], [l("Size", "Kích thước"), entry.size ?? l("Needs review", "Cần rà soát")], [l("Expected lifespan", "Tuổi thọ dự kiến"), entry.lifespan ?? l("Needs review", "Cần rà soát")]];
+  const guidance = [[l("Housing & environment", "Nơi ở & môi trường"), entry.housing], [l("Feeding overview", "Tổng quan ăn uống"), entry.feeding], [l("Activity & enrichment", "Vận động & làm giàu"), entry.enrichment], [l("Social needs", "Nhu cầu xã hội"), entry.socialNeeds], [l("Maintenance", "Chăm sóc định kỳ"), entry.maintenance], [l("Training", "Huấn luyện"), entry.training], [l("Welfare considerations", "Cân nhắc phúc lợi"), entry.welfare], [l("Health boundary", "Ranh giới sức khỏe"), entry.health], [l("Children & other pets", "Trẻ em & thú khác"), entry.suitability], [l("Climate sensitivity", "Nhạy cảm khí hậu"), entry.climateSensitivity]] as const;
+  return <main><section className="breed-detail-hero container"><div className="breed-detail-image"><img src={entry.imageUrl} alt={localizeCatalog(entry.imageAlt, locale)} onError={e => { e.currentTarget.src = "/brand/pawtome-logo.png"; }} /></div><div><p className="eyebrow">{l(...groupLabels[entry.group])}</p><h1>{localizeCatalog(entry.commonName, locale)}</h1><p className="lede">{localizeCatalog(entry.summary, locale)}</p><p><i>{entry.scientificName}</i></p><div className="facts">{facts.map(([label,value])=><span key={label}><small>{label}</small><b>{value}</b></span>)}</div><Status tone="caution">{l("Broad guidance · individual assessment required", "Hướng dẫn chung · cần đánh giá từng cá thể")}</Status></div></section>
+    <Section title={l("Care overview", "Tổng quan chăm sóc")} intro={l("Unknown fields stay unknown; the catalog does not turn weak evidence into precise ratings.", "Trường chưa biết vẫn để chưa biết; danh mục không biến bằng chứng yếu thành điểm số chính xác.")}><div className="guidance-grid catalog-guidance container">{guidance.map(([title,value])=><article key={title}><h2>{title}</h2><p>{localizeCatalog(value, locale)}</p></article>)}</div></Section>
+    <EvidenceSection entry={entry} locale={locale} />
+  </main>;
 }
 
 function PageHero({ locale, route, tag }: { locale: Locale; route: string; tag?: string }) {
@@ -152,12 +199,14 @@ function Quiz({ locale }: { locale: Locale }) {
   return <div className="answer-grid">{[l("Yes", "Có"), l("Only a little", "Chỉ một chút"), l("No", "Không")].map((x, i) => <button key={x} className={answer ? (i === 2 ? "correct" : "muted") : ""} onClick={() => setAnswer(String(i))}>{x}</button>)}{answer && <p className="answer-note">{l("Correct answer: No. Grapes and raisins can be dangerous to dogs; contact a veterinarian promptly if ingestion is suspected.", "Đáp án đúng: Không. Nho tươi và nho khô có thể nguy hiểm với chó; hãy liên hệ bác sĩ thú y sớm nếu nghi ngờ đã ăn phải.")}</p>}</div>;
 }
 
-function Breeds({ locale, saved, toggleSaved }: { locale: Locale; saved: string[]; toggleSaved: (s: string) => void }) {
+function Breeds({ locale, saved, toggleSaved, entries, source, warning }: { locale: Locale; saved: string[]; toggleSaved: (s: string) => void; entries: AnimalEntry[]; source: "supabase" | "seed"; warning: string | null }) {
   const l = (en: string, vi: string) => localized(locale, en, vi);
   const [query, setQuery] = useState("");
-  const [species, setSpecies] = useState("All");
-  const shown = breeds.filter(b => (species === "All" || b.species === species) && b.name.toLowerCase().includes(query.toLowerCase()));
-  return <><PageHero locale={locale} route="/breeds" /><main className="container"><div className="filter-bar"><label><span>{l("Search breeds", "Tìm giống")}</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder={l("Try Shiba, Maine Coon…", "Thử Shiba, Maine Coon…")} /></label><div className="segmented" aria-label={l("Species filter", "Lọc loài")}>{["All", "Dog", "Cat"].map(x => <button className={species === x ? "active" : ""} onClick={() => setSpecies(x)} key={x}>{x === "All" ? l("All", "Tất cả") : x === "Dog" ? l("Dogs", "Chó") : l("Cats", "Mèo")}</button>)}</div><label><span>{l("Sort", "Sắp xếp")}</span><select><option>{l("Popularity", "Phổ biến")}</option><option>{l("Name", "Tên")}</option><option>{l("Easiest care", "Dễ chăm sóc")}</option><option>{l("Energy level", "Năng lượng")}</option></select></label></div><div className="active-filters"><button>Apartment friendly ×</button><button>Family friendly ×</button><button>{l("More filters", "Thêm bộ lọc")} +</button></div><div className="breed-grid">{shown.map(b => <BreedCard key={b.name} breed={b} locale={locale} saved={saved.includes(b.name)} toggle={() => toggleSaved(b.name)} />)}</div></main></>;
+  const [species, setSpecies] = useState<"all" | CatalogGroup>("all");
+  const [activity, setActivity] = useState("all");
+  const shown = entries.filter(entry => (species === "all" || entry.group === species) && (activity === "all" || entry.activity === activity) && `${entry.commonName["en-US"]} ${entry.commonName.vi} ${entry.scientificName}`.toLowerCase().includes(query.toLowerCase()));
+  const speciesOptions: Array<["all" | CatalogGroup,string,string]> = [["all","All","Tất cả"],["dog","Dogs","Chó"],["cat","Cats","Mèo"],["bird","Birds","Chim"],["small-mammal","Small mammals","Thú nhỏ"],["reptile","Reptiles","Bò sát"],["freshwater-fish","Fish","Cá"]];
+  return <><PageHero locale={locale} route="/breeds" /><main className="container"><div className="data-notice"><Status tone={source === "supabase" ? "safe" : "neutral"}>{source === "supabase" ? l("Live reviewed catalog", "Danh mục trực tiếp đã rà soát") : l("Deterministic local catalog", "Danh mục cục bộ xác định")}</Status><span>{entries.length} {l("entries", "mục")}</span>{warning && <span role="status">{warning}</span>}</div><div className="filter-bar catalog-filter"><label><span>{l("Search catalog", "Tìm danh mục")}</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder={l("Name or scientific name…", "Tên thường hoặc tên khoa học…")} /></label><div className="segmented species-segments" aria-label={l("Species filter", "Lọc loài")}>{speciesOptions.map(([value,en,vi]) => <button className={species === value ? "active" : ""} onClick={() => setSpecies(value)} key={value}>{l(en,vi)}</button>)}</div><label><span>{l("Activity", "Vận động")}</span><select value={activity} onChange={e=>setActivity(e.target.value)}><option value="all">{l("All levels", "Mọi mức")}</option><option value="low">{l("Low", "Thấp")}</option><option value="moderate">{l("Moderate", "Vừa")}</option><option value="high">{l("High", "Cao")}</option></select></label></div>{shown.length ? <div className="breed-grid">{shown.map(entry => <CatalogCard key={entry.slug} entry={entry} locale={locale} saved={saved.includes(entry.slug)} toggle={() => toggleSaved(entry.slug)} />)}</div> : <div className="empty-state"><p>{l("No entries match these filters.", "Không có mục nào phù hợp bộ lọc.")}</p></div>}</main></>;
 }
 
 function Shiba({ locale, saved, toggleSaved }: { locale: Locale; saved: string[]; toggleSaved: (s: string) => void }) {
@@ -169,6 +218,7 @@ function Shiba({ locale, saved, toggleSaved }: { locale: Locale; saved: string[]
     <section className="fit-section"><div className="container"><div className="section-head"><p className="eyebrow">{l("Is this breed right for me?", "Giống này có hợp với tôi?")}</p><h2>{l("Love the whole Shiba—not just the look.", "Hãy yêu cả tính cách Shiba—không chỉ vẻ ngoài.")}</h2></div><div className="fit-grid"><article><h3>✓ {l("Great fit if you…", "Phù hợp nếu bạn…")}</h3><ul><li>{l("enjoy active walks", "thích đi bộ năng động")}</li><li>{l("appreciate independent pets", "trân trọng thú cưng độc lập")}</li><li>{l("can train consistently", "có thể huấn luyện nhất quán")}</li><li>{l("accept seasonal shedding", "chấp nhận rụng lông theo mùa")}</li></ul></article><article><h3>! {l("Think carefully if you…", "Cân nhắc kỹ nếu bạn…")}</h3><ul><li>{l("expect effortless obedience", "mong chờ vâng lời dễ dàng")}</li><li>{l("need immediate off-leash recall", "cần gọi về không dây dắt ngay")}</li><li>{l("strongly dislike shedding", "rất không thích rụng lông")}</li><li>{l("keep small prey animals", "nuôi động vật nhỏ dễ bị săn đuổi")}</li></ul></article></div><a className="button primary" href="/pet-match">{l("Take the pet match quiz", "Làm bài kiểm tra phù hợp")}</a></div></section>
   </main>;
 }
+void Shiba;
 
 function Compare({ locale }: { locale: Locale }) {
   const l = (en: string, vi: string) => localized(locale, en, vi);
@@ -257,7 +307,19 @@ function Ask({ locale }: { locale: Locale }) {
 
 function MyPets({ locale }: { locale: Locale }) {
   const l = (en: string, vi: string) => localized(locale, en, vi);
-  return <><PageHero locale={locale} route="/my-pets" /><main className="container"><a href="/my-pets/momo" className="pet-profile-card"><img src={breedImages["Shiba Inu"]} alt="Momo the Shiba Inu" /><div><Status tone="neutral">{l("Active profile", "Hồ sơ đang dùng")}</Status><h2>Momo</h2><p>Shiba Inu · {l("Born 12 May 2023", "Sinh 12 tháng 5, 2023")} · 9.5 kg</p><div className="fact-chips"><span>{l("Medium activity", "Vận động vừa")}</span><span>{l("Intermediate training", "Huấn luyện trung cấp")}</span></div></div><b>→</b></a><button className="add-pet">＋<span>{l("Add another pet", "Thêm thú cưng")}</span></button></main></>;
+  const [userId,setUserId]=useState<string|null>(null); const [pets,setPets]=useState<Array<{id:string;name:string}>>([]); const [name,setName]=useState(""); const [message,setMessage]=useState("");
+  useEffect(()=>{const client=createSupabaseBrowserClient();if(!client)return;async function load(){const auth=await client!.auth.getUser();if(!auth.data.user)return;setUserId(auth.data.user.id);const result=await client!.from("pets").select("id,name").eq("owner_id",auth.data.user.id).order("created_at");if(result.data)setPets(result.data);}void load();},[]);
+  async function addPet(event:FormEvent){event.preventDefault();const client=createSupabaseBrowserClient();if(!client||!userId||!name.trim())return;const {data,error}=await client.from("pets").insert({owner_id:userId,name:name.trim()}).select("id,name").single();if(error)setMessage(error.message);else{setPets(current=>[...current,data]);setName("");setMessage(l("Pet saved privately.","Đã lưu thú cưng ở chế độ riêng tư."));}}
+  async function addPhoto(petId:string,file:File|undefined){if(!file)return;try{await uploadPetPhoto(petId,file);setMessage(l("Private photo uploaded.","Đã tải ảnh riêng tư."));}catch(error){setMessage(error instanceof Error?error.message:l("Upload failed.","Tải lên thất bại."));}}
+  return <><PageHero locale={locale} route="/my-pets" /><main className="container">{!userId&&<div className="review-note"><Status tone="neutral">{l("Demo profile", "Hồ sơ minh họa")}</Status><p>{l("Sign in to persist private pets, photos, favorites, care tasks, weights and training progress with Row Level Security.","Đăng nhập để lưu riêng tư thú cưng, ảnh, mục yêu thích, việc chăm sóc, cân nặng và tiến độ huấn luyện bằng Row Level Security.")} <a href="/account"><b>{l("Sign in", "Đăng nhập")} →</b></a></p></div>}<a href="/my-pets/momo" className="pet-profile-card"><img src={breedImages["Shiba Inu"]} alt="Momo the Shiba Inu" /><div><Status tone="neutral">{l("Preserved demo animal", "Thú minh họa được giữ lại")}</Status><h2>Momo</h2><p>Shiba Inu · {l("Born 12 May 2023", "Sinh 12 tháng 5, 2023")} · 9.5 kg</p><div className="fact-chips"><span>{l("Medium activity", "Vận động vừa")}</span><span>{l("Intermediate training", "Huấn luyện trung cấp")}</span></div></div><b>→</b></a>{userId&&<section className="private-pets"><h2>{l("Private pet profiles", "Hồ sơ thú cưng riêng tư")}</h2>{pets.map(pet=><article key={pet.id}><div><Status tone="safe">{l("Private", "Riêng tư")}</Status><h3>{pet.name}</h3></div><label className="button secondary">{l("Add private photo", "Thêm ảnh riêng tư")}<input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={event=>void addPhoto(pet.id,event.target.files?.[0])}/></label></article>)}<form className="add-pet-form" onSubmit={addPet}><label><span>{l("Pet name", "Tên thú cưng")}</span><input required maxLength={80} value={name} onChange={event=>setName(event.target.value)}/></label><button className="button primary">{l("Add pet", "Thêm thú cưng")}</button></form>{message&&<p role="status">{message}</p>}</section>}</main></>;
+}
+
+function Account({ locale }: { locale: Locale }) {
+  const l=(en:string,vi:string)=>localized(locale,en,vi); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [message,setMessage]=useState(""); const [signedIn,setSignedIn]=useState(false);
+  useEffect(()=>{const client=createSupabaseBrowserClient();if(!client)return;async function load(){const auth=await client!.auth.getUser();setSignedIn(Boolean(auth.data.user));}void load();},[]);
+  async function submit(event:FormEvent,mode:"sign-in"|"sign-up"){event.preventDefault();const client=createSupabaseBrowserClient();if(!client){setMessage(l("Supabase environment variables are not configured.","Chưa cấu hình biến môi trường Supabase."));return;}const result=mode==="sign-in"?await client.auth.signInWithPassword({email,password}):await client.auth.signUp({email,password,options:{data:{locale}}});if(result.error)setMessage(result.error.message);else{setSignedIn(Boolean(result.data.user));setMessage(mode==="sign-in"?l("Signed in.","Đã đăng nhập."):l("Account created. Check email if confirmation is enabled.","Đã tạo tài khoản. Kiểm tra email nếu bật xác nhận."));}}
+  async function signOut(){const client=createSupabaseBrowserClient();if(client)await client.auth.signOut();setSignedIn(false);setMessage(l("Signed out.","Đã đăng xuất."));}
+  return <><PageHero locale={locale} route="/account" tag={l("Supabase Auth", "Xác thực Supabase")}/><main className="container account-shell">{signedIn?<section><Status tone="safe">{l("Authenticated", "Đã xác thực")}</Status><h2>{l("Your private Pawtome space is ready.","Không gian Pawtome riêng tư đã sẵn sàng.")}</h2><div className="actions"><a className="button primary" href="/my-pets">{l("Open my pets", "Mở thú cưng")}</a><button className="button secondary" onClick={()=>void signOut()}>{l("Sign out", "Đăng xuất")}</button></div></section>:<form onSubmit={event=>void submit(event,"sign-in")}><label><span>Email</span><input required type="email" autoComplete="email" value={email} onChange={event=>setEmail(event.target.value)}/></label><label><span>{l("Password", "Mật khẩu")}</span><input required minLength={8} type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)}/></label><div className="actions"><button className="button primary" type="submit">{l("Sign in", "Đăng nhập")}</button><button className="button secondary" type="button" onClick={event=>void submit(event,"sign-up")}>{l("Create account", "Tạo tài khoản")}</button></div></form>}{message&&<p role="status">{message}</p>}</main></>;
 }
 
 function Momo({ locale }: { locale: Locale }) {
@@ -274,21 +336,21 @@ function Generic({ locale, route }: { locale: Locale; route: string }) {
   return <><PageHero locale={locale} route={route} /><main className="container empty-page"><h2>{localized(locale, "A thoughtful guide is ready here.", "Hướng dẫn hữu ích đã sẵn sàng tại đây.")}</h2><a className="button primary" href="/discover">{localized(locale, "Explore Pawtome", "Khám phá Pawtome")}</a></main></>;
 }
 
-export default function PawtomeApp({ route }: { route: string }) {
+export default function PawtomeApp({ route, catalogEntries, catalogSource, catalogWarning }: { route: string; catalogEntries: AnimalEntry[]; catalogSource: "supabase" | "seed"; catalogWarning: string | null }) {
   const [locale, setLocale] = useState<Locale>("en-US"); const [menu, setMenu] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [search, setSearch] = useState(""); const [saved, setSaved] = useState<string[]>([]);
-  useEffect(() => { const previous = window.localStorage.getItem("pawtome-locale") as Locale | null; if (previous) setLocale(previous); const fav = window.localStorage.getItem("pawtome-saved"); if (fav) setSaved(JSON.parse(fav)); }, []);
+  useEffect(() => { const previous = window.localStorage.getItem("pawtome-locale") as Locale | null; const fav = window.localStorage.getItem("pawtome-saved"); queueMicrotask(()=>{if (previous) setLocale(previous);if (fav) setSaved(JSON.parse(fav));}); const client = createSupabaseBrowserClient(); if (!client) return; async function load(){const auth=await client!.auth.getUser();if(!auth.data.user)return;const result=await client!.from("favorites").select("target_key").eq("user_id",auth.data.user.id);if(result.data?.length)setSaved(result.data.map((item:{target_key:string})=>item.target_key));}void load(); }, []);
   function changeLocale(value: Locale) { setLocale(value); window.localStorage.setItem("pawtome-locale", value); document.documentElement.lang = value; }
-  function toggleSaved(item: string) { setSaved(current => { const next = current.includes(item) ? current.filter(x => x !== item) : [...current, item]; window.localStorage.setItem("pawtome-saved", JSON.stringify(next)); return next; }); }
+  function toggleSaved(item: string) { const key=item.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""); setSaved(current => { const next = current.includes(item)||current.includes(key) ? current.filter(x => x !== item && x !== key) : [...current, key]; window.localStorage.setItem("pawtome-saved", JSON.stringify(next)); void persistFavorite("animal-entry",key,next.includes(key)); return next; }); }
   const l = (en: string, vi: string) => localized(locale, en, vi);
   const nav = [["Discover", "Khám phá", "/discover"], ["Breeds", "Giống", "/breeds"], ["Care", "Chăm sóc", "/care"], ["Food", "Thực phẩm", "/food"], ["Training", "Huấn luyện", "/training"], ["Behavior", "Hành vi", "/behavior"], ["My Pets", "Thú cưng", "/my-pets"]];
-  const searchResults = useMemo(() => [
-    ["Breed", "Shiba Inu", "/breeds/shiba-inu"], ["Food", "Strawberry", "/food/strawberry"], ["Training", "Teach your dog to sit", "/training/sit"], [l("Behavior", "Hành vi"), l("Why dogs lick their paws", "Vì sao chó liếm chân"), "/behavior/paw-licking"]
-  ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase())), [search, locale]);
+  const searchResults = [
+    ...catalogEntries.slice(0,10).map(entry=>[l(...groupLabels[entry.group]),localizeCatalog(entry.commonName,locale),`/breeds/${entry.slug}`]), ["Food", "Strawberry", "/food/strawberry"], ["Training", "Teach your dog to sit", "/training/sit"], [l("Behavior", "Hành vi"), l("Why dogs lick their paws", "Vì sao chó liếm chân"), "/behavior/paw-licking"]
+  ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   let content: ReactNode;
   if (route === "/") content = <Home locale={locale} saved={saved} toggleSaved={toggleSaved} />;
   else if (route === "/discover") content = <Discover locale={locale} />;
-  else if (route === "/breeds") content = <Breeds locale={locale} saved={saved} toggleSaved={toggleSaved} />;
-  else if (route === "/breeds/shiba-inu") content = <Shiba locale={locale} saved={saved} toggleSaved={toggleSaved} />;
+  else if (route === "/breeds") content = <Breeds locale={locale} saved={saved} toggleSaved={toggleSaved} entries={catalogEntries} source={catalogSource} warning={catalogWarning} />;
+  else if (route.startsWith("/breeds/")) { const entry=catalogEntries.find(item=>`/breeds/${item.slug}`===route); content=entry?<AnimalDetail locale={locale} entry={entry}/>:<Generic locale={locale} route={route}/>; }
   else if (route === "/compare") content = <Compare locale={locale} />;
   else if (route === "/pet-match") content = <PetMatch locale={locale} />;
   else if (route === "/food") content = <Food locale={locale} />;
@@ -306,9 +368,9 @@ export default function PawtomeApp({ route }: { route: string }) {
   else if (route === "/ask") content = <Ask locale={locale} />;
   else if (route === "/my-pets") content = <MyPets locale={locale} />;
   else if (route === "/my-pets/momo") content = <Momo locale={locale} />;
+  else if (route === "/account") content = <Account locale={locale} />;
   else if (route === "/saved") content = <Saved locale={locale} saved={saved} toggleSaved={toggleSaved} />;
   else content = <Generic locale={locale} route={route} />;
 
   return <div className="app-shell"><a className="skip-link" href="#main">{l("Skip to content", "Bỏ qua đến nội dung")}</a><nav className="topbar"><div className="nav-inner"><a className="brand" href="/" aria-label="Pawtome home"><span>Paw</span>tome<i /></a><div className={`main-nav ${menu ? "open" : ""}`}>{nav.map(x => <a className={route === x[2] || (x[2] !== "/discover" && route.startsWith(x[2])) ? "active" : ""} href={x[2]} key={x[2]}>{l(x[0], x[1])}</a>)}</div><div className="nav-actions"><button className="icon-button" onClick={() => setSearchOpen(!searchOpen)} aria-label={l("Search", "Tìm kiếm")}>⌕</button><label className="locale-select"><span className="sr-only">{l("Language", "Ngôn ngữ")}</span><select value={locale} onChange={e => changeLocale(e.target.value as Locale)}><option value="vi">VI</option><option value="en-US">EN US</option><option value="en-GB">EN UK</option></select></label><a className="ask-button" href="/ask">{l("Ask Pawtome", "Hỏi Pawtome")}</a><button className="menu-button" aria-expanded={menu} onClick={() => setMenu(!menu)}><span /><span /></button></div></div>{searchOpen && <div className="global-search"><div className="container"><label><span>⌕</span><input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder={l("Search all Pawtome", "Tìm toàn bộ Pawtome")} /><button onClick={() => setSearchOpen(false)}>×</button></label><div>{searchResults.map(x => <a href={x[2]} key={x[2]}><small>{x[0]}</small><b>{x[1]}</b><span>→</span></a>)}</div></div></div>}</nav><div id="main">{content}</div><nav className="mobile-bottom"><a href="/"><span>⌂</span>{l("Home", "Trang chủ")}</a><a href="/discover"><span>⌕</span>{l("Discover", "Khám phá")}</a><a className="ask" href="/ask"><span>✦</span>{l("Ask", "Hỏi")}</a><a href="/saved"><span>♡</span>{l("Saved", "Đã lưu")}</a><a href="/my-pets"><span>●</span>{l("My Pets", "Thú cưng")}</a></nav><footer><div className="container footer-grid"><div><a className="brand light-brand" href="/"><span>Paw</span>tome<i /></a><p>{l("Understand. Care. Grow Together.", "Thấu hiểu. Chăm sóc. Cùng trưởng thành.")}</p></div><div><b>{l("Explore", "Khám phá")}</b><a href="/breeds">{l("Breeds", "Giống")}</a><a href="/food">{l("Food safety", "An toàn thực phẩm")}</a><a href="/behavior">{l("Behavior", "Hành vi")}</a></div><div><b>{l("Care", "Chăm sóc")}</b><a href="/training">{l("Training", "Huấn luyện")}</a><a href="/grooming">{l("Grooming", "Chăm sóc lông")}</a><a href="/safety">{l("Emergency guide", "Hướng dẫn khẩn cấp")}</a></div><div><b>{l("Important", "Quan trọng")}</b><p>{l("Pawtome offers general education, not veterinary diagnosis. For emergencies, contact a veterinary professional.", "Pawtome cung cấp kiến thức chung, không chẩn đoán thú y. Khi khẩn cấp, hãy liên hệ chuyên gia thú y.")}</p></div></div></footer></div>;
 }
-

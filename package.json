@@ -9,11 +9,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "npm run build && node --test tests/pawtome.test.mjs",
-    "lint": "eslint . --ignore-pattern .next"
+    "typecheck": "tsc --noEmit --incremental false",
+    "seed:generate": "node scripts/generate-seed.ts",
+    "seed:validate": "node scripts/validate-content.ts",
+    "test": "npm run seed:generate && npm run seed:validate && npm run build && node --test tests/*.test.mjs",
+    "lint": "eslint . --ignore-pattern .next --ignore-pattern supabase/seed.sql"
   },
   "dependencies": {
-    "next": "16.2.6",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.3",
+    "next": "^16.3.1",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
@@ -23,10 +28,9 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "^16.3.1",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3"
   },
   "type": "module"
 }
-
