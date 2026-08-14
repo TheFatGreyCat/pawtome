@@ -1,5 +1,6 @@
-import PetWiseApp from "./PetWiseApp";
+import PawtomeApp from "./PawtomeApp";
 
 export default function Home() {
-  return <PetWiseApp route="/" />;
+  return <PawtomeApp route="/" />;
 }
+

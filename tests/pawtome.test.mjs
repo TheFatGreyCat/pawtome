@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("keeps Companion Atlas deployable as a native Next.js app", async () => {
+test("keeps Pawtome deployable as a native Next.js app", async () => {
   const [app, pkg] = await Promise.all([
-    readFile(new URL("../app/PetWiseApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/PawtomeApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
@@ -14,3 +14,4 @@ test("keeps Companion Atlas deployable as a native Next.js app", async () => {
   assert.doesNotMatch(pkg, /cloudflare|vinext|vite|wrangler|drizzle/i);
   assert.match(pkg, /"build": "next build"/);
 });
+

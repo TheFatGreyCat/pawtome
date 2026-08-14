@@ -45,7 +45,8 @@ p { color: var(--muted); line-height: 1.65; }
 
 .topbar { position: sticky; top: 0; z-index: 100; background: rgba(247, 242, 232, .9); backdrop-filter: blur(20px); border-bottom: 1px solid var(--line); }
 .nav-inner { width: min(1400px, calc(100% - 40px)); height: 76px; margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 28px; }
-.brand { position: relative; font-family: Georgia, serif; font-size: 1.55rem; font-weight: 700; letter-spacing: -.05em; white-space: nowrap; }
+.brand { position: relative; display: inline-flex; align-items: center; min-height: 2rem; padding-left: 2.25rem; font-family: Georgia, serif; font-size: 1.55rem; font-weight: 700; letter-spacing: -.05em; white-space: nowrap; }
+.brand::before { content: ""; position: absolute; left: 0; width: 1.9rem; height: 1.9rem; background: url("/brand/pawtome-logo.png") center / contain no-repeat; }
 .brand span { color: var(--terra); }
 .brand i { width: 6px; height: 6px; position: absolute; right: -8px; top: 3px; border-radius: 50%; background: var(--sage); }
 .main-nav { display: flex; align-items: center; gap: 23px; font-size: .88rem; font-weight: 650; }
