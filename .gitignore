@@ -40,3 +40,6 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# AI AGENT task docs
+CODEX_TASK.md
