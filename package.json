@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit --incremental false",
     "seed:generate": "node scripts/generate-seed.ts",
     "seed:validate": "node scripts/validate-content.ts",
+    "media:gather": "node scripts/gather-editorial-images.ts",
     "test": "npm run seed:generate && npm run seed:validate && npm run build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern .next --ignore-pattern supabase/seed.sql"
   },
